@@ -1,0 +1,91 @@
+data:
+  train_sets:
+    - name: "Market-1501-v15.09.15"
+      ref_root: "/root/datasets/market1501/bounding_box_train"
+      target_root: "/root/datasets/market1501/bounding_box_train"
+      pose_root: "/root/datasets/market1501/bounding_box_train_pose"
+      identity_mode: "filename"
+      filename_delimiter: "_"
+      filename_index: 0
+  train_width: 512
+  train_height: 256
+  reid_width: 128
+  reid_height: 256
+  image_extensions: [".jpg", ".jpeg", ".png", ".bmp", ".webp"]
+  ref_random_flip: true
+  ref_random_erasing_prob: 0.5
+  ref_random_erasing_on: "reid"
+  allow_same_reference: false
+
+solver:
+  train_batch_size: 8
+  num_workers: 4
+  gradient_accumulation_steps: 1
+  mixed_precision: "fp16"
+  enable_xformers_memory_efficient_attention: true
+  gradient_checkpointing: false
+  max_train_steps: 250
+  checkpointing_steps: 125
+  checkpoints_total_limit: 5
+  max_grad_norm: 1.0
+  learning_rate: 1.0e-5
+  lr_warmup_steps: 500
+  lr_scheduler: "constant_with_warmup"
+  use_8bit_adam: false
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_weight_decay: 1.0e-2
+  adam_epsilon: 1.0e-8
+
+validation:
+  enabled: false
+  every_n_steps: 2000
+  ref_dir: "./ref"
+  pose_dir: "./standard_poses"
+  num_inference_steps: 20
+  guidance_scale: 3.5
+  preview_width: 128
+  preview_height: 256
+
+reid:
+  cfg_path: "./cfg_transreid.pkl"
+  ckpt_path: "./pretrained/transformer_20.pth"
+  num_classes: 751
+  camera_num: 0
+  view_num: 1
+
+model:
+  latent_scale: 0.18215
+  ifr_input_dim: 3840
+  ifr_num_tokens: 20
+  ifr_hidden_dim: 768
+  reference_unet_ckpt: null
+  denoising_unet_ckpt: null
+  pose_guider_ckpt: null
+  ifr_ckpt: null
+  resume_from_checkpoint: null
+
+logging:
+  log_with: "tensorboard"
+  # log_with: null
+  project_dir: "tensorboard_runs"
+  run_name: "ipg_train_test_log"
+
+noise_scheduler_kwargs:
+  num_train_timesteps: 1000
+  beta_start: 0.00085
+  beta_end: 0.012
+  beta_schedule: "scaled_linear"
+  steps_offset: 1
+  clip_sample: false
+
+base_model_path: "/root/autodl-tmp/stable-diffusion-v1-5"
+vae_model_path: "/root/autodl-tmp/sd-vae-ft-mse"
+output_dir: "/root/autodl-fs/ipg_test_log_500"
+
+weight_dtype: "fp16"  # [fp16, fp32, bf16]
+uncond_ratio: 0.1
+noise_offset: 0.05
+snr_gamma: null
+enable_zero_snr: false
+seed: 12580
