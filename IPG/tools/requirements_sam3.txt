@@ -1,0 +1,8 @@
+# Install in the environment used for offline mask extraction.
+# Keep this separate from IPG/requirements.txt to avoid disturbing the
+# original training environment pins.
+transformers>=5.0.0
+torch
+Pillow
+tqdm
+opencv-python

@@ -1,3 +1,4 @@
+import json
 import random
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -8,6 +9,12 @@ from torch.utils.data import Dataset
 from torchvision.transforms import InterpolationMode
 from torchvision.transforms import RandomErasing
 from torchvision.transforms import functional as TF
+
+from src.utils.mask_utils import (
+    build_soft_half_masks,
+    load_mask_tensor,
+    pose_to_part_masks,
+)
 
 
 DEFAULT_IMAGE_EXTENSIONS = (
@@ -94,6 +101,37 @@ def _resolve_pose_path(
     return None
 
 
+def _resolve_mask_path(
+    image_path: Path,
+    image_root: Path,
+    mask_root: Optional[Path],
+    image_extensions: Sequence[str],
+    suffix: Optional[str] = None,
+) -> Optional[Path]:
+    if mask_root is None:
+        return None
+
+    rel_path = image_path.relative_to(image_root)
+    candidates = []
+    if suffix is None:
+        candidates.append(mask_root / rel_path)
+    else:
+        candidates.append(mask_root / rel_path)
+        candidates.append(mask_root / rel_path.parent / f"{image_path.stem}_{suffix}{image_path.suffix}")
+        candidates.append(mask_root / suffix / rel_path)
+        candidates.append(mask_root / rel_path.parent / suffix / image_path.name)
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+        stem_candidate = candidate.with_suffix("")
+        for ext in image_extensions:
+            ext_candidate = stem_candidate.with_suffix(ext)
+            if ext_candidate.exists():
+                return ext_candidate
+    return None
+
+
 class IPGDataset(Dataset):
     def __init__(
         self,
@@ -107,6 +145,11 @@ class IPGDataset(Dataset):
         ref_random_erasing_prob: float = 0.0,
         ref_random_erasing_on: str = "reid",
         allow_same_reference: bool = False,
+        ref_upper_mask_root: Optional[str] = None,
+        ref_lower_mask_root: Optional[str] = None,
+        target_upper_mask_root: Optional[str] = None,
+        target_lower_mask_root: Optional[str] = None,
+        color_json_path: Optional[str] = None,
     ):
         self.dataset_specs = list(dataset_specs)
         self.image_height = image_height
@@ -120,6 +163,16 @@ class IPGDataset(Dataset):
         self.ref_random_erasing_prob = ref_random_erasing_prob
         self.ref_random_erasing_on = ref_random_erasing_on
         self.allow_same_reference = allow_same_reference
+        self.ref_upper_mask_root = Path(ref_upper_mask_root) if ref_upper_mask_root else None
+        self.ref_lower_mask_root = Path(ref_lower_mask_root) if ref_lower_mask_root else None
+        self.target_upper_mask_root = (
+            Path(target_upper_mask_root) if target_upper_mask_root else None
+        )
+        self.target_lower_mask_root = (
+            Path(target_lower_mask_root) if target_lower_mask_root else None
+        )
+        self.color_json_path = Path(color_json_path) if color_json_path else None
+        self.color_descriptions = self._load_color_descriptions(self.color_json_path)
         self.random_erasing = RandomErasing(
             p=ref_random_erasing_prob,
             scale=(0.02, 0.2),
@@ -128,12 +181,20 @@ class IPGDataset(Dataset):
         )
 
         self.identity_to_refs: Dict[Tuple[str, str], List[Path]] = {}
+        self.ref_roots_by_dataset: Dict[str, Path] = {}
+        self.target_roots_by_dataset: Dict[str, Path] = {}
         self.target_records: List[dict] = []
         self.dataset_summaries: List[dict] = []
         self._build_index()
 
         if not self.target_records:
             raise RuntimeError("No valid IPG training samples were found.")
+
+    def _load_color_descriptions(self, path: Optional[Path]) -> Dict[str, dict]:
+        if path is None or not path.exists():
+            return {}
+        with open(path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
 
     def _build_index(self) -> None:
         for raw_spec in self.dataset_specs:
@@ -171,6 +232,9 @@ class IPGDataset(Dataset):
                 raise FileNotFoundError(f"target_root does not exist: {target_root}")
             if not pose_root.exists():
                 raise FileNotFoundError(f"pose_root does not exist: {pose_root}")
+
+            self.ref_roots_by_dataset[dataset_name] = ref_root
+            self.target_roots_by_dataset[dataset_name] = target_root
 
             ref_grouped = _collect_grouped_images(
                 root=ref_root,
@@ -268,6 +332,50 @@ class IPGDataset(Dataset):
         )
         return TF.to_tensor(image)
 
+    def _load_part_masks(
+        self,
+        image_path: Path,
+        image_root: Path,
+        upper_root: Optional[Path],
+        lower_root: Optional[Path],
+        *,
+        flip: bool = False,
+        fallback_pose: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        upper_path = _resolve_mask_path(
+            image_path,
+            image_root,
+            upper_root,
+            self.image_extensions,
+            suffix="upper",
+        )
+        lower_path = _resolve_mask_path(
+            image_path,
+            image_root,
+            lower_root,
+            self.image_extensions,
+            suffix="lower",
+        )
+        upper = load_mask_tensor(upper_path, self.image_height, self.image_width, flip=flip)
+        lower = load_mask_tensor(lower_path, self.image_height, self.image_width, flip=flip)
+        if upper is not None and lower is not None:
+            return upper, lower
+        if fallback_pose is not None:
+            pose_upper, pose_lower = pose_to_part_masks(fallback_pose)
+            return pose_upper, pose_lower
+        fallback_upper, fallback_lower = build_soft_half_masks(
+            self.image_height, self.image_width
+        )
+        return fallback_upper, fallback_lower
+
+    def _lookup_color_text(self, ref_path: Path) -> Tuple[str, str]:
+        record = self.color_descriptions.get(ref_path.name)
+        if record is None:
+            record = self.color_descriptions.get(ref_path.stem)
+        if not isinstance(record, dict):
+            return "", ""
+        return str(record.get("upper", "") or ""), str(record.get("lower", "") or "")
+
     def __getitem__(self, index: int) -> dict:
         record = self.target_records[index]
         ref_candidates = self.identity_to_refs[record["identity_key"]]
@@ -280,7 +388,10 @@ class IPGDataset(Dataset):
                 valid_refs = ref_candidates
 
         ref_path = random.choice(valid_refs)
-        ref_image = self._maybe_flip(self._load_rgb(ref_path))
+        flip_ref = self.ref_random_flip and random.random() < 0.5
+        ref_image = self._load_rgb(ref_path)
+        if flip_ref:
+            ref_image = TF.hflip(ref_image)
         target_image = self._load_rgb(record["target_path"])
         pose_image = self._load_rgb(record["pose_path"])
 
@@ -293,12 +404,35 @@ class IPGDataset(Dataset):
 
         target_tensor = self._build_diffusion_tensor(target_image)
         pose_tensor = self._build_pose_tensor(pose_image)
+        ref_root = self.ref_roots_by_dataset[record["dataset_name"]]
+        target_root = self.target_roots_by_dataset[record["dataset_name"]]
+        ref_upper_mask, ref_lower_mask = self._load_part_masks(
+            ref_path,
+            ref_root,
+            self.ref_upper_mask_root,
+            self.ref_lower_mask_root,
+            flip=flip_ref,
+        )
+        target_upper_mask, target_lower_mask = self._load_part_masks(
+            record["target_path"],
+            target_root,
+            self.target_upper_mask_root,
+            self.target_lower_mask_root,
+            fallback_pose=pose_tensor,
+        )
+        color_upper_text, color_lower_text = self._lookup_color_text(ref_path)
 
         return {
             "ref_image": ref_tensor,
             "target_image": target_tensor,
             "pose_image": pose_tensor,
             "reid_image": reid_tensor,
+            "ref_upper_mask": ref_upper_mask,
+            "ref_lower_mask": ref_lower_mask,
+            "target_upper_mask": target_upper_mask,
+            "target_lower_mask": target_lower_mask,
+            "color_upper_text": color_upper_text,
+            "color_lower_text": color_lower_text,
             "dataset_name": record["dataset_name"],
             "identity": record["identity"],
             "ref_path": str(ref_path),

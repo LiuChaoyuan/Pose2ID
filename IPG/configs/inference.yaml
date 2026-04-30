@@ -3,6 +3,27 @@ data:
   train_height: 256
   sample_margin: 30
 
+features:
+  part_reference_bank:
+    enabled: true
+    lambda_init: 0.0
+    masks:
+      ref_upper_root: "/root/autodl-fs/datasets/market1501/sam3_part_masks"
+      ref_lower_root: "/root/autodl-fs/datasets/market1501/sam3_part_masks"
+      target_upper_root: "/root/autodl-fs/datasets/market1501/sam3_part_masks"
+      target_lower_root: "/root/autodl-fs/datasets/market1501/sam3_part_masks"
+  color_structure:
+    enabled: true
+    color_json_path: "/root/autodl-fs/datasets/market1501/clothing_colors_nl.json"
+    clip_model_path: null
+    tokenizer_subfolder: "tokenizer"
+    text_encoder_subfolder: "text_encoder"
+    color_scale: 0.25
+  pose_loss:
+    enabled: false
+    weight: 0.05
+    max_sigma: 0.35
+
 solver:
   gradient_accumulation_steps: 1
   mixed_precision: 'fp16'
@@ -42,6 +63,4 @@ enable_zero_snr: False
 pose_guider_pretrain: True
 
 seed: 12580
-
-
 

@@ -1,6 +1,0 @@
-artifact_location: file:///root/Pose2ID/IPG/mlruns/356781168356220615
-creation_time: 1775711389781
-experiment_id: '356781168356220615'
-last_update_time: 1775711389781
-lifecycle_stage: active
-name: ipg_train_test_log

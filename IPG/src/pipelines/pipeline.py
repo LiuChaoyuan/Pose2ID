@@ -19,6 +19,7 @@ from diffusers.utils.torch_utils import randn_tensor
 from einops import rearrange
 
 from src.models.mutual_self_attention import ReferenceAttentionControl
+from src.utils.mask_utils import pose_to_part_masks, prepare_mask_batch
 
 
 @dataclass
@@ -43,6 +44,7 @@ class Pose2ImagePipeline(DiffusionPipeline):
             EulerAncestralDiscreteScheduler,
             DPMSolverMultistepScheduler,
         ],
+        part_bank_fusion=None,
     ):
         super().__init__()
 
@@ -53,6 +55,7 @@ class Pose2ImagePipeline(DiffusionPipeline):
             pose_guider=pose_guider,
             scheduler=scheduler,
         )
+        self.part_bank_fusion = part_bank_fusion
         self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1)
         self.ref_image_processor = VaeImageProcessor(
             vae_scale_factor=self.vae_scale_factor, do_convert_rgb=True
@@ -205,6 +208,15 @@ class Pose2ImagePipeline(DiffusionPipeline):
         callback: Optional[Callable[[int, int, torch.FloatTensor], None]] = None,
         callback_steps: Optional[int] = 1,
         batch_size = 1,
+        ref_upper_mask=None,
+        ref_lower_mask=None,
+        target_upper_mask=None,
+        target_lower_mask=None,
+        color_upper_states: Optional[torch.Tensor] = None,
+        color_lower_states: Optional[torch.Tensor] = None,
+        part_bank_enabled: bool = False,
+        color_structure_enabled: bool = False,
+        color_scale: float = 0.25,
         **kwargs,
     ):
         # Default height and width to unet
@@ -229,6 +241,7 @@ class Pose2ImagePipeline(DiffusionPipeline):
             mode="write",
             batch_size=batch_size,
             fusion_blocks="full",
+            part_bank_enabled=part_bank_enabled,
         )
         reference_control_reader = ReferenceAttentionControl(
             self.denoising_unet,
@@ -236,6 +249,10 @@ class Pose2ImagePipeline(DiffusionPipeline):
             mode="read",
             batch_size=batch_size,
             fusion_blocks="full",
+            part_bank_enabled=part_bank_enabled,
+            part_bank_fusion=self.part_bank_fusion,
+            color_structure_enabled=color_structure_enabled,
+            color_scale=color_scale,
         )
 
         num_channels_latents = self.denoising_unet.in_channels
@@ -263,10 +280,63 @@ class Pose2ImagePipeline(DiffusionPipeline):
         )
         ref_image_latents = self.vae.encode(ref_image_tensor).latent_dist.mean
         ref_image_latents = ref_image_latents * 0.18215  # (b, 4, h, w)
+        ref_upper_latents = None
+        ref_lower_latents = None
+        if part_bank_enabled:
+            ref_upper_mask_tensor = prepare_mask_batch(
+                ref_upper_mask,
+                ref_image_tensor.shape[0],
+                height,
+                width,
+                device=ref_image_tensor.device,
+                dtype=ref_image_tensor.dtype,
+                fallback="upper",
+            )
+            ref_lower_mask_tensor = prepare_mask_batch(
+                ref_lower_mask,
+                ref_image_tensor.shape[0],
+                height,
+                width,
+                device=ref_image_tensor.device,
+                dtype=ref_image_tensor.dtype,
+                fallback="lower",
+            )
+            ref_upper_latents = self.vae.encode(
+                ref_image_tensor * ref_upper_mask_tensor
+            ).latent_dist.mean
+            ref_upper_latents = ref_upper_latents * 0.18215
+            ref_lower_latents = self.vae.encode(
+                ref_image_tensor * ref_lower_mask_tensor
+            ).latent_dist.mean
+            ref_lower_latents = ref_lower_latents * 0.18215
 
         # Prepare pose condition image
         pose_cond_tensor = self.cond_image_processor.preprocess(
             pose_image, height=height, width=width
+        )
+        if target_upper_mask is None or target_lower_mask is None:
+            fallback_upper, fallback_lower = pose_to_part_masks(pose_cond_tensor)
+            if target_upper_mask is None:
+                target_upper_mask = fallback_upper
+            if target_lower_mask is None:
+                target_lower_mask = fallback_lower
+        target_upper_mask = prepare_mask_batch(
+            target_upper_mask,
+            batch_size,
+            height,
+            width,
+            device=device,
+            dtype=reid_embeds.dtype,
+            fallback="upper",
+        )
+        target_lower_mask = prepare_mask_batch(
+            target_lower_mask,
+            batch_size,
+            height,
+            width,
+            device=device,
+            dtype=reid_embeds.dtype,
+            fallback="lower",
         )
         pose_cond_tensor = pose_cond_tensor.unsqueeze(2)  # (bs, c, 1, h, w)
         pose_cond_tensor = pose_cond_tensor.to(
@@ -276,6 +346,21 @@ class Pose2ImagePipeline(DiffusionPipeline):
         pose_fea = (
             torch.cat([pose_fea] * 2) if do_classifier_free_guidance else pose_fea
         )
+        if color_upper_states is not None and color_lower_states is not None:
+            color_upper_states = color_upper_states.to(device=device, dtype=reid_embeds.dtype)
+            color_lower_states = color_lower_states.to(device=device, dtype=reid_embeds.dtype)
+            if do_classifier_free_guidance and color_upper_states.shape[0] == batch_size:
+                color_upper_states = torch.cat(
+                    [torch.zeros_like(color_upper_states), color_upper_states], dim=0
+                )
+                color_lower_states = torch.cat(
+                    [torch.zeros_like(color_lower_states), color_lower_states], dim=0
+                )
+        reference_control_reader.set_target_masks(target_upper_mask, target_lower_mask)
+        if color_structure_enabled:
+            reference_control_reader.set_color_states(
+                color_upper_states, color_lower_states, color_scale=color_scale
+            )
 
         # denoising loop
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
@@ -284,14 +369,33 @@ class Pose2ImagePipeline(DiffusionPipeline):
 
             # 1. Forward reference image
             if i == 0:
+                repeat_factor = 2 if do_classifier_free_guidance else 1
+                reference_control_writer.set_active_bank("global")
                 self.reference_unet(
-                    ref_image_latents.repeat(
-                        (2 if do_classifier_free_guidance else 1), 1, 1, 1
-                    ),
+                    ref_image_latents.repeat(repeat_factor, 1, 1, 1),
                     torch.zeros_like(t),
                     encoder_hidden_states=reid_embeds,
                     return_dict=False,
                 )
+                if (
+                    part_bank_enabled
+                    and ref_upper_latents is not None
+                    and ref_lower_latents is not None
+                ):
+                    reference_control_writer.set_active_bank("upper")
+                    self.reference_unet(
+                        ref_upper_latents.repeat(repeat_factor, 1, 1, 1),
+                        torch.zeros_like(t),
+                        encoder_hidden_states=reid_embeds,
+                        return_dict=False,
+                    )
+                    reference_control_writer.set_active_bank("lower")
+                    self.reference_unet(
+                        ref_lower_latents.repeat(repeat_factor, 1, 1, 1),
+                        torch.zeros_like(t),
+                        encoder_hidden_states=reid_embeds,
+                        return_dict=False,
+                    )
 
                 # 2. Update reference unet feature into denosing net
                 reference_control_reader.update(reference_control_writer)

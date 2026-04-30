@@ -22,9 +22,11 @@ from torchvision.transforms import functional as TF
 from tqdm.auto import tqdm
 
 from reidmodel.trainsreid import make_model as make_transreid_model
+from src.models.color_condition import ColorTextEncoder
 from src.ipg_dataset import IPGDataset
 from src.models.ifr import IFR
-from src.models.mutual_self_attention import ReferenceAttentionControl
+from src.models.mutual_self_attention import PartBankFusion, ReferenceAttentionControl
+from src.models.pose_loss import DifferentiablePoseLoss
 from src.models.pose_guider import PoseGuider
 from src.models.unet_2d_condition import UNet2DConditionModel
 from src.models.unet_3d import UNet3DConditionModel
@@ -42,23 +44,36 @@ class IPGTrainModel(nn.Module):
         reference_unet: UNet2DConditionModel,
         denoising_unet: UNet3DConditionModel,
         pose_guider: PoseGuider,
+        part_bank_enabled: bool = False,
+        part_bank_lambda_init: float = 0.0,
+        color_structure_enabled: bool = False,
+        color_scale: float = 0.0,
     ):
         super().__init__()
         self.ifr = ifr
         self.reference_unet = reference_unet
         self.denoising_unet = denoising_unet
         self.pose_guider = pose_guider
+        self.part_bank_enabled = part_bank_enabled
+        self.color_structure_enabled = color_structure_enabled
+        self.color_scale = float(color_scale)
+        self.part_bank_fusion = PartBankFusion(lambda_init=part_bank_lambda_init)
         self.reference_control_writer = ReferenceAttentionControl(
             reference_unet,
             do_classifier_free_guidance=False,
             mode="write",
             fusion_blocks="full",
+            part_bank_enabled=part_bank_enabled,
         )
         self.reference_control_reader = ReferenceAttentionControl(
             denoising_unet,
             do_classifier_free_guidance=False,
             mode="read",
             fusion_blocks="full",
+            part_bank_enabled=part_bank_enabled,
+            part_bank_fusion=self.part_bank_fusion,
+            color_structure_enabled=color_structure_enabled,
+            color_scale=color_scale,
         )
 
     def forward(
@@ -68,6 +83,12 @@ class IPGTrainModel(nn.Module):
         ref_image_latents: torch.Tensor,
         reid_features: torch.Tensor,
         pose_images: torch.Tensor,
+        ref_upper_latents: Optional[torch.Tensor] = None,
+        ref_lower_latents: Optional[torch.Tensor] = None,
+        target_upper_mask: Optional[torch.Tensor] = None,
+        target_lower_mask: Optional[torch.Tensor] = None,
+        color_upper_states: Optional[torch.Tensor] = None,
+        color_lower_states: Optional[torch.Tensor] = None,
         cond_dropout_prob: float = 0.0,
     ) -> torch.Tensor:
         identity_embeds = self.ifr(reid_features)
@@ -81,17 +102,63 @@ class IPGTrainModel(nn.Module):
             ref_image_latents = ref_image_latents * keep_mask[:, None, None, None].to(
                 ref_image_latents.dtype
             )
+            if ref_upper_latents is not None:
+                ref_upper_latents = ref_upper_latents * keep_mask[:, None, None, None].to(
+                    ref_upper_latents.dtype
+                )
+            if ref_lower_latents is not None:
+                ref_lower_latents = ref_lower_latents * keep_mask[:, None, None, None].to(
+                    ref_lower_latents.dtype
+                )
+            if color_upper_states is not None:
+                color_upper_states = color_upper_states * keep_mask[:, None, None].to(
+                    color_upper_states.dtype
+                )
+            if color_lower_states is not None:
+                color_lower_states = color_lower_states * keep_mask[:, None, None].to(
+                    color_lower_states.dtype
+                )
 
         pose_cond_tensor = pose_images.unsqueeze(2)
         pose_fea = self.pose_guider(pose_cond_tensor)
 
         try:
+            ref_timesteps = torch.zeros_like(timesteps)
+            self.reference_control_reader.set_target_masks(
+                target_upper_mask, target_lower_mask
+            )
+            if self.color_structure_enabled:
+                self.reference_control_reader.set_color_states(
+                    color_upper_states,
+                    color_lower_states,
+                    color_scale=self.color_scale,
+                )
+            self.reference_control_writer.set_active_bank("global")
             self.reference_unet(
                 ref_image_latents,
-                torch.zeros_like(timesteps),
+                ref_timesteps,
                 encoder_hidden_states=identity_embeds,
                 return_dict=False,
             )
+            if (
+                self.part_bank_enabled
+                and ref_upper_latents is not None
+                and ref_lower_latents is not None
+            ):
+                self.reference_control_writer.set_active_bank("upper")
+                self.reference_unet(
+                    ref_upper_latents,
+                    ref_timesteps,
+                    encoder_hidden_states=identity_embeds,
+                    return_dict=False,
+                )
+                self.reference_control_writer.set_active_bank("lower")
+                self.reference_unet(
+                    ref_lower_latents,
+                    ref_timesteps,
+                    encoder_hidden_states=identity_embeds,
+                    return_dict=False,
+                )
             self.reference_control_reader.update(self.reference_control_writer)
             model_pred = self.denoising_unet(
                 noisy_latents,
@@ -118,6 +185,11 @@ def load_config(config_path: str):
     if config_path.endswith(".py"):
         return import_filename(config_path).cfg
     raise ValueError(f"Unsupported config format: {config_path}")
+
+
+def cfg_select(cfg, key: str, default=None):
+    value = OmegaConf.select(cfg, key)
+    return default if value is None else value
 
 
 def resolve_train_sets(cfg) -> List[dict]:
@@ -222,6 +294,11 @@ def save_component_weights(output_dir: Path, global_step: int, accelerator: Acce
         torch.save(unwrapped.denoising_unet.state_dict(), checkpoint_dir / "denoising_unet.pth")
         torch.save(unwrapped.pose_guider.state_dict(), checkpoint_dir / "pose_guider.pth")
         torch.save(unwrapped.ifr.state_dict(), checkpoint_dir / "IFR.pth")
+        if hasattr(unwrapped, "part_bank_fusion"):
+            torch.save(
+                unwrapped.part_bank_fusion.state_dict(),
+                checkpoint_dir / "part_bank_fusion.pth",
+            )
     return checkpoint_dir
 
 
@@ -313,6 +390,7 @@ def run_validation(
         denoising_unet=unwrapped.denoising_unet,
         pose_guider=unwrapped.pose_guider,
         scheduler=build_validation_scheduler(cfg),
+        part_bank_fusion=getattr(unwrapped, "part_bank_fusion", None),
     ).to(accelerator.device)
 
     generator = torch.Generator(device=accelerator.device)
@@ -345,6 +423,9 @@ def run_validation(
                 cfg.validation.guidance_scale,
                 batch_size=len(pose_images),
                 generator=generator,
+                part_bank_enabled=bool(
+                    cfg_select(cfg, "features.part_reference_bank.enabled", False)
+                ),
             ).images
 
             preview_w = cfg.validation.preview_width
@@ -402,6 +483,19 @@ def main():
         ref_random_erasing_prob=cfg.data.ref_random_erasing_prob,
         ref_random_erasing_on=cfg.data.ref_random_erasing_on,
         allow_same_reference=cfg.data.allow_same_reference,
+        ref_upper_mask_root=cfg_select(
+            cfg, "features.part_reference_bank.masks.ref_upper_root"
+        ),
+        ref_lower_mask_root=cfg_select(
+            cfg, "features.part_reference_bank.masks.ref_lower_root"
+        ),
+        target_upper_mask_root=cfg_select(
+            cfg, "features.part_reference_bank.masks.target_upper_root"
+        ),
+        target_lower_mask_root=cfg_select(
+            cfg, "features.part_reference_bank.masks.target_lower_root"
+        ),
+        color_json_path=cfg_select(cfg, "features.color_structure.color_json_path"),
     )
     if accelerator.is_main_process:
         for summary in train_dataset.dataset_summaries:
@@ -431,6 +525,34 @@ def main():
     vae.requires_grad_(False)
 
     reid_model = load_reid_model(cfg, accelerator.device)
+    part_bank_enabled = bool(
+        cfg_select(cfg, "features.part_reference_bank.enabled", False)
+    )
+    color_structure_enabled = bool(
+        cfg_select(cfg, "features.color_structure.enabled", False)
+    )
+    pose_loss_enabled = bool(cfg_select(cfg, "features.pose_loss.enabled", False))
+    color_encoder = None
+    if color_structure_enabled:
+        color_encoder = ColorTextEncoder(
+            cfg_select(cfg, "features.color_structure.clip_model_path", cfg.base_model_path),
+            tokenizer_subfolder=cfg_select(
+                cfg, "features.color_structure.tokenizer_subfolder", "tokenizer"
+            ),
+            text_encoder_subfolder=cfg_select(
+                cfg, "features.color_structure.text_encoder_subfolder", "text_encoder"
+            ),
+        ).to(device=accelerator.device, dtype=weight_dtype)
+        color_encoder.eval()
+    pose_loss_fn = None
+    if pose_loss_enabled:
+        pose_loss_fn = DifferentiablePoseLoss(
+            weight=cfg_select(cfg, "features.pose_loss.weight", 0.05),
+            max_sigma=cfg_select(cfg, "features.pose_loss.max_sigma", 0.35),
+            distance_iterations=cfg_select(
+                cfg, "features.pose_loss.distance_iterations", 8
+            ),
+        ).to(accelerator.device)
 
     reference_unet = UNet2DConditionModel.from_pretrained(
         cfg.base_model_path,
@@ -479,7 +601,18 @@ def main():
         reference_unet=reference_unet,
         denoising_unet=denoising_unet,
         pose_guider=pose_guider,
+        part_bank_enabled=part_bank_enabled,
+        part_bank_lambda_init=cfg_select(
+            cfg, "features.part_reference_bank.lambda_init", 0.0
+        ),
+        color_structure_enabled=color_structure_enabled,
+        color_scale=cfg_select(cfg, "features.color_structure.color_scale", 0.25),
     )
+    part_bank_fusion_ckpt = cfg_select(cfg, "model.part_bank_fusion_ckpt")
+    if part_bank_fusion_ckpt:
+        ipg_model.part_bank_fusion.load_state_dict(
+            torch.load(part_bank_fusion_ckpt, map_location="cpu"), strict=True
+        )
 
     params_to_optimize = [p for p in ipg_model.parameters() if p.requires_grad]
     if cfg.solver.use_8bit_adam:
@@ -549,13 +682,47 @@ def main():
                 reid_images = batch["reid_image"].to(
                     accelerator.device, dtype=torch.float32
                 )
+                ref_upper_masks = batch["ref_upper_mask"].to(
+                    accelerator.device, dtype=weight_dtype
+                )
+                ref_lower_masks = batch["ref_lower_mask"].to(
+                    accelerator.device, dtype=weight_dtype
+                )
+                target_upper_masks = batch["target_upper_mask"].to(
+                    accelerator.device, dtype=weight_dtype
+                )
+                target_lower_masks = batch["target_lower_mask"].to(
+                    accelerator.device, dtype=weight_dtype
+                )
 
                 with torch.no_grad():
                     latents = vae.encode(target_images).latent_dist.sample()
                     latents = latents * cfg.model.latent_scale
                     ref_latents = vae.encode(ref_images).latent_dist.sample()
                     ref_latents = ref_latents * cfg.model.latent_scale
+                    ref_upper_latents = None
+                    ref_lower_latents = None
+                    if part_bank_enabled:
+                        ref_upper_images = ref_images * ref_upper_masks
+                        ref_lower_images = ref_images * ref_lower_masks
+                        ref_upper_latents = vae.encode(
+                            ref_upper_images
+                        ).latent_dist.sample()
+                        ref_upper_latents = ref_upper_latents * cfg.model.latent_scale
+                        ref_lower_latents = vae.encode(
+                            ref_lower_images
+                        ).latent_dist.sample()
+                        ref_lower_latents = ref_lower_latents * cfg.model.latent_scale
                     reid_features = build_reid_condition(reid_model, reid_images)
+                    color_upper_states = None
+                    color_lower_states = None
+                    if color_encoder is not None:
+                        color_upper_states, color_lower_states = color_encoder.encode_pair(
+                            batch["color_upper_text"],
+                            batch["color_lower_text"],
+                            device=accelerator.device,
+                            dtype=weight_dtype,
+                        )
 
                 noise = torch.randn_like(latents)
                 if cfg.noise_offset > 0:
@@ -589,12 +756,20 @@ def main():
                         dtype=accelerator.unwrap_model(ipg_model).ifr.proj_motion.weight.dtype
                     ),
                     pose_images=pose_images,
+                    ref_upper_latents=ref_upper_latents,
+                    ref_lower_latents=ref_lower_latents,
+                    target_upper_mask=target_upper_masks,
+                    target_lower_mask=target_lower_masks,
+                    color_upper_states=color_upper_states,
+                    color_lower_states=color_lower_states,
                     cond_dropout_prob=cfg.uncond_ratio,
                 )
 
                 target = target.unsqueeze(2)
                 if cfg.snr_gamma is None:
-                    loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
+                    loss_mse = F.mse_loss(
+                        model_pred.float(), target.float(), reduction="mean"
+                    )
                 else:
                     snr = compute_snr(train_scheduler, timesteps)
                     if prediction_type == "epsilon":
@@ -606,11 +781,27 @@ def main():
                             snr, torch.full_like(snr, cfg.snr_gamma)
                         ) / (snr + 1)
 
-                    loss = F.mse_loss(
+                    loss_mse = F.mse_loss(
                         model_pred.float(), target.float(), reduction="none"
                     )
-                    loss = loss.mean(dim=list(range(1, loss.ndim)))
-                    loss = (loss * mse_loss_weights).mean()
+                    loss_mse = loss_mse.mean(dim=list(range(1, loss_mse.ndim)))
+                    loss_mse = (loss_mse * mse_loss_weights).mean()
+
+                loss_pose = model_pred.new_zeros(())
+                if pose_loss_fn is not None:
+                    loss_pose = pose_loss_fn(
+                        model_pred=model_pred,
+                        noisy_latents=noisy_latents,
+                        timesteps=timesteps,
+                        scheduler=train_scheduler,
+                        vae=vae,
+                        pose_images=pose_images,
+                        prediction_type=prediction_type,
+                        latent_scale=cfg.model.latent_scale,
+                    )
+                loss = loss_mse + (
+                    pose_loss_fn.weight * loss_pose if pose_loss_fn is not None else 0
+                )
 
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
@@ -626,9 +817,12 @@ def main():
                 progress_bar.update(1)
                 logs = {
                     "loss": loss.detach().item(),
+                    "loss_mse": loss_mse.detach().item(),
                     "lr": lr_scheduler.get_last_lr()[0],
                     "step": global_step,
                 }
+                if pose_loss_fn is not None:
+                    logs["loss_pose"] = loss_pose.detach().item()
                 progress_bar.set_postfix(loss=f"{logs['loss']:.4f}", lr=f"{logs['lr']:.2e}")
                 accelerator.log(logs, step=global_step)
 

@@ -1,9 +1,9 @@
 data:
   train_sets:
     - name: "Market-1501-v15.09.15"
-      ref_root: "/root/datasets/market1501/bounding_box_train"
-      target_root: "/root/datasets/market1501/bounding_box_train"
-      pose_root: "/root/datasets/market1501/bounding_box_train_pose"
+      ref_root: "/root/autodl-fs/datasets/market1501/bounding_box_train"
+      target_root: "/root/autodl-fs/datasets/market1501/bounding_box_train"
+      pose_root: "/root/autodl-fs/datasets/market1501/bounding_box_train_pose"
       identity_mode: "filename"
       filename_delimiter: "_"
       filename_index: 0
@@ -16,6 +16,28 @@ data:
   ref_random_erasing_prob: 0.5
   ref_random_erasing_on: "reid"
   allow_same_reference: false
+
+features:
+  part_reference_bank:
+    enabled: true
+    lambda_init: 0.0
+    masks:
+      ref_upper_root: "/root/autodl-fs/datasets/market1501/sam3_part_masks/bounding_box_train/upper"
+      ref_lower_root: "/root/autodl-fs/datasets/market1501/sam3_part_masks/bounding_box_train/lower"
+      target_upper_root: "/root/autodl-fs/datasets/market1501/sam3_part_masks/bounding_box_train/upper"
+      target_lower_root: "/root/autodl-fs/datasets/market1501/sam3_part_masks/bounding_box_train/lower"
+  color_structure:
+    enabled: true
+    color_json_path: "/root/autodl-fs/datasets/market1501/clothing_colors_nl.json"
+    clip_model_path: null
+    tokenizer_subfolder: "tokenizer"
+    text_encoder_subfolder: "text_encoder"
+    color_scale: 0.25
+  pose_loss:
+    enabled: true
+    weight: 0.05
+    max_sigma: 0.35
+    distance_iterations: 8
 
 solver:
   train_batch_size: 8
@@ -63,6 +85,7 @@ model:
   denoising_unet_ckpt: null
   pose_guider_ckpt: null
   ifr_ckpt: null
+  part_bank_fusion_ckpt: null
   resume_from_checkpoint: null
 
 logging:
@@ -81,7 +104,7 @@ noise_scheduler_kwargs:
 
 base_model_path: "/root/autodl-tmp/stable-diffusion-v1-5"
 vae_model_path: "/root/autodl-tmp/sd-vae-ft-mse"
-output_dir: "/root/autodl-fs/ipg_test_log_500"
+output_dir: "/root/autodl-fs/ipg_trained_model_xx-xx"
 
 weight_dtype: "fp16"  # [fp16, fp32, bf16]
 uncond_ratio: 0.1
