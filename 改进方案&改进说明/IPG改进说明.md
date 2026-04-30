@@ -82,6 +82,23 @@ F_ref = F_global
 
 只有当当前样本的 `sigma <= pose_loss.max_sigma` 时才计算，降低训练开销。
 
+具体实现不是用 `t / num_timesteps` 这种“步数比例”，而是用 scheduler 的真实噪声强度：
+
+```python
+sigma = sqrt(1 - alphas_cumprod[t])
+selected = sigma <= max_sigma
+```
+
+也就是说：只有当当前训练 batch 里某些样本的噪声强度 `sigma` 小于配置阈值 `features.pose_loss.max_sigma` 时，才会对这些低噪声样本计算姿势损失；如果一个 batch 没有满足条件的样本，就返回 0，不额外 decode。位置在 [pose_loss.py](E:/codes/Python/Pose2ID/IPG/src/models/pose_loss.py:117)。
+
+训练总损失是在 [train_ipg.py](E:/codes/Python/Pose2ID/IPG/train_ipg.py:790) 里合成的：
+
+```python
+loss = loss_mse + pose_loss_fn.weight * loss_pose
+```
+
+姿势损失流程是：从 `model_pred + noisy_latents + timestep` 估计 `x0_latents`，用 VAE decode 得到近似生成图，再计算 soft edge / soft distance field 与 target pose distance field 的 MSE。这个实现对应你说的“扩散模型训练过程中采样噪声比例小于阈值 -> 计算姿势损失”，只是阈值判断用的是更贴近扩散噪声本身的 `sigma`。
+
 ## 5. 启动方式
 
 离线提取 SAM3 语义掩码：
