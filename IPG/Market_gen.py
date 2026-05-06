@@ -50,6 +50,17 @@ def parse_args():
     parser.add_argument("--mask_root", type=str, default=None)
     parser.add_argument("--disable_part_bank", action="store_true")
     parser.add_argument("--disable_color_structure", action="store_true")
+    # Path 2 / 3 / 4 overrides (negative sigma -> disable timestep gate).
+    parser.add_argument("--color_timestep_max_sigma", type=float, default=None)
+    parser.add_argument("--color_min_layer_weight", type=float, default=None)
+    parser.add_argument("--color_query_threshold", type=float, default=None)
+    parser.add_argument(
+        "--color_hard_gating",
+        type=str,
+        choices=["true", "false"],
+        default=None,
+        help="Override hard query gating from config; 'true'/'false'.",
+    )
     return parser.parse_args()
 
 
@@ -329,6 +340,7 @@ def generate_split(
     device: torch.device,
     part_bank_enabled: bool,
     color_enabled: bool,
+    color_gating: dict,
 ):
     if not split_dir.exists():
         raise FileNotFoundError(f"Input directory does not exist: {split_dir}")
@@ -404,6 +416,10 @@ def generate_split(
             part_bank_enabled=part_bank_enabled,
             color_structure_enabled=color_enabled,
             color_scale=cfg_select(cfg, "features.color_structure.color_scale", 0.25),
+            color_timestep_max_sigma=color_gating["timestep_max_sigma"],
+            color_min_layer_weight=color_gating["min_layer_weight"],
+            color_hard_gating=color_gating["hard_gating"],
+            color_query_threshold=color_gating["query_threshold"],
         ).images
         save_generated_images(generated_images, pose_names, output_root, image_path.name)
         print(f"[{image_index}/{len(image_paths)}] Saved {image_path.name}")
@@ -435,6 +451,37 @@ def main():
             cfg, "features.part_reference_bank.masks.ref_upper_root"
         )
 
+    # Resolve color gating knobs (Path 2 / 3 / 4). Negative sigma in CLI/yaml
+    # disables the timestep gate; CLI overrides win over the yaml.
+    cfg_max_sigma = cfg_select(cfg, "features.color_structure.timestep_max_sigma")
+    if args.color_timestep_max_sigma is not None:
+        cfg_max_sigma = args.color_timestep_max_sigma
+    color_timestep_max_sigma = (
+        float(cfg_max_sigma) if cfg_max_sigma is not None and float(cfg_max_sigma) >= 0 else None
+    )
+    color_min_layer_weight = float(
+        args.color_min_layer_weight
+        if args.color_min_layer_weight is not None
+        else cfg_select(cfg, "features.color_structure.min_layer_weight", 0.0)
+    )
+    color_query_threshold = float(
+        args.color_query_threshold
+        if args.color_query_threshold is not None
+        else cfg_select(cfg, "features.color_structure.query_threshold", 0.5)
+    )
+    if args.color_hard_gating is not None:
+        color_hard_gating = args.color_hard_gating == "true"
+    else:
+        color_hard_gating = bool(
+            cfg_select(cfg, "features.color_structure.hard_query_gating", False)
+        )
+    color_gating = {
+        "timestep_max_sigma": color_timestep_max_sigma,
+        "min_layer_weight": color_min_layer_weight,
+        "hard_gating": color_hard_gating,
+        "query_threshold": color_query_threshold,
+    }
+
     pipe, ifr, reid_net, color_encoder = load_models(
         cfg, args, device, part_bank_enabled, color_enabled
     )
@@ -460,6 +507,7 @@ def main():
             device=device,
             part_bank_enabled=part_bank_enabled,
             color_enabled=color_enabled,
+            color_gating=color_gating,
         )
         generate_split(
             split_dir=Path(args.bound_box_test_dir),
@@ -476,6 +524,7 @@ def main():
             device=device,
             part_bank_enabled=part_bank_enabled,
             color_enabled=color_enabled,
+            color_gating=color_gating,
         )
 
 

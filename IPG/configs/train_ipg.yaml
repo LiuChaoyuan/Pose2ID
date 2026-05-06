@@ -33,6 +33,15 @@ features:
     tokenizer_subfolder: "tokenizer"
     text_encoder_subfolder: "text_encoder"
     color_scale: 0.25
+    # See configs/inference.yaml for full documentation. Defaults during
+    # training are intentionally looser than inference: we let the model
+    # see color signal across more sigma / layers so the cross-attention
+    # weights can actually learn the color concept; the gating is then
+    # tightened at inference time to suppress structural drift.
+    timestep_max_sigma: -1
+    min_layer_weight: 0.0
+    hard_query_gating: false
+    query_threshold: 0.5
   pose_loss:
     enabled: true
     weight: 0.05

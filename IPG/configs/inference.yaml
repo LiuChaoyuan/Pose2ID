@@ -19,6 +19,17 @@ features:
     tokenizer_subfolder: "tokenizer"
     text_encoder_subfolder: "text_encoder"
     color_scale: 0.25
+    # Path 2: only inject color when noise level sigma <= threshold (~ low-noise
+    # half of the schedule). Set to a negative value or null to disable.
+    timestep_max_sigma: 0.5
+    # Path 3: only inject color in transformer blocks whose attn_weight >=
+    # threshold. attn_weight is in [0, 1], 0 = deepest/lowest-resolution layer,
+    # 1 = shallowest/highest-resolution layer. 0.0 = inject in every block.
+    min_layer_weight: 0.3
+    # Path 4: hard-gate the color cross-attention by the body-part mask, so the
+    # color tokens cannot influence queries outside the targeted region.
+    hard_query_gating: true
+    query_threshold: 0.5
   pose_loss:
     enabled: false
     weight: 0.05

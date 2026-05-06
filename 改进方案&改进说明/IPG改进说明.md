@@ -21,6 +21,11 @@ features:
     color_json_path: "/root/autodl-fs/datasets/market1501/clothing_colors_nl.json"
     clip_model_path: null
     color_scale: 0.25
+    # ↓↓↓ 控制颜色 prompt 的"侵入度"，详见 §3.1
+    timestep_max_sigma: 0.5      # 推理：仅在 sigma <= 0.5 的低噪声步注入颜色
+    min_layer_weight: 0.3        # 仅在 attn_weight >= 0.3 的中高分辨率层注入
+    hard_query_gating: true      # 颜色 attn 只对 mask 内 query 生效（路径 4）
+    query_threshold: 0.5         # 上面 hard mask 的 0/1 阈值
   pose_loss:
     enabled: true
     weight: 0.05
@@ -69,6 +74,92 @@ F_ref = F_global
 - `color_scale` 控制颜色注入强度，默认 `0.25`。
 
 缺少 JSON 或缺少某张图的记录时，颜色 token 自动置零，不影响旧数据集运行。
+
+## 3.1 控制颜色 prompt 对图像的影响（路径 2/3/4）
+
+颜色文本经过 SD 1.5 的 `attn2`，本质上复用了"文本→形状"的预训练能力，加之 CFG 还会把"加了颜色 prompt 的扰动"再放大 `guidance_scale` 倍，导致颜色描述很容易喧宾夺主、扰乱姿势与肢体几何。本次新增三段并联门控，**默认推理全开、训练全关**（让 attn2 学到完整颜色概念，再在推理时收敛），三段都可以通过 yaml 单独消融。
+
+### 3.1.1 Timestep gating（路径 2，训练 + 推理均可生效）
+
+仅在低噪声步注入颜色，让高噪声步专注于结构生成。
+
+```yaml
+features.color_structure.timestep_max_sigma: 0.5   # 推理推荐 0.5；训练默认 -1（关）
+```
+
+- 推理 loop 每步开始时计算 `sigma = sqrt(1 - alphas_cumprod[t])` 并通过 `ReferenceAttentionControl.set_active_sigma(sigma)` 通知 controller。
+- 训练 loop 在 `IPGTrainModel.forward` 内根据 `timesteps` 取 batch 平均 sigma 通知 controller，因此训练侧此字段同样会生效（前提是设为非负值）；`alphas_cumprod` 通过 `register_buffer(persistent=False)` 缓存，不入 checkpoint。
+- `sigma > timestep_max_sigma` 的步直接跳过颜色 cross-attention 注入。
+- 设为 `null` 或负数即关闭该门。训练 yaml 默认 `-1` 是为了让 attn2 在全噪声段都被监督，避免 train/test 推理分布上 over-restrict；要 train/test 严格对齐时，把训练 yaml 也改成 `0.5` 即可。
+
+### 3.1.2 Layer gating（路径 3，训练 + 推理）
+
+仅在中高分辨率（更靠近输出端）的 transformer block 注入颜色，跳过最深的低分辨率层（这些层主要负责整体姿势骨架）。
+
+```yaml
+features.color_structure.min_layer_weight: 0.3
+```
+
+- 利用既有的 `module.attn_weight ∈ [0, 1]`：`0` 表示通道最多的最深层，`1` 表示通道最少的最浅层。
+- `attn_weight < min_layer_weight` 的层完全跳过颜色注入。
+- 设为 `0.0` 时退化为"所有层都注入"。
+
+### 3.1.3 Hard query gating（路径 4，训练 + 推理）
+
+把 `target_upper_mask / target_lower_mask` 从"软 mask 后乘"升级成"硬 0/1 写回 mask"，杜绝颜色 residual 通过 soft mask 边缘渐变泄漏到肢体附近。
+
+```yaml
+features.color_structure.hard_query_gating: true
+features.color_structure.query_threshold: 0.5
+```
+
+实现差异（在 `IPG/src/models/mutual_self_attention.py` 颜色注入分支）：
+
+```text
+soft (旧)：
+    attn_out = attn2(norm_h, K=color_kv)         # 全空间 query 都和颜色 token 算 attn
+    cross   += scale * mask_soft * attn_out      # 在外面乘 soft mask（边缘渐变会泄漏）
+
+hard (新)：
+    attn_out = attn2(norm_h, K=color_kv)         # attn 计算不变
+    gate     = (mask_soft > query_threshold)     # 硬 0/1 写回 mask
+    cross   += scale * gate * attn_out           # mask 外区域颜色 residual 严格为 0
+```
+
+> 设计上曾尝试把 query 也用 mask 预先置零（`norm_h * gate`），但全零向量经过 attn2 仍会得到 `softmax(0·K)·V = mean(V)` 的非零输出，相当于在 mask 外注入了一个 query 无关的均匀颜色 bias，反而增加了数值噪声且无意义；最终采用的"输入不动 + 输出端硬 gate"是验证后等价但更稳定的实现。
+
+设为 `false` 时退化为旧的 soft 后乘逻辑。
+
+### 3.1.4 推理侧 CLI 覆盖
+
+`Market_gen.py` 新增四个 CLI 选项，用于不改 yaml 快速验证：
+
+```bash
+python Market_gen.py \
+  --color_timestep_max_sigma 0.4 \
+  --color_min_layer_weight 0.5 \
+  --color_query_threshold 0.6 \
+  --color_hard_gating true
+```
+
+`--color_timestep_max_sigma` 传负值即关闭 timestep gate；`--color_hard_gating` 取值 `true` / `false`。
+
+### 3.1.5 与已训练 checkpoint 的兼容性
+
+- 三段门控**不引入任何可学习参数**，老 checkpoint 直接加载即可推理。
+- 训练时若希望完全复现旧行为，把 `timestep_max_sigma: -1`、`min_layer_weight: 0.0`、`hard_query_gating: false` 三项都设上即可（也是当前训练 yaml 默认值）。
+- `IPGTrainModel` 新增的 `alphas_cumprod` 是 `register_buffer(persistent=False)`，不写入 checkpoint，老的 train state 可以无缝 resume。
+- 所有 gating 都是只在 `attn2` 输出端做加权/跳过，不改 `denoising_unet.pth` 的 state_dict shape。
+
+### 3.1.6 调参建议
+
+观察到生成结果"颜色对、但肢体扭曲/手臂多余"时，按下面顺序逐项收紧：
+
+1. 先把 `color_scale` 从 `0.25` 降到 `0.15`，验证肢体改善幅度；
+2. 把 `timestep_max_sigma` 从 `0.5` 收到 `0.3`，让颜色只参与最后约 1/3 的步；
+3. `min_layer_weight` 从 `0.3` 抬到 `0.5`，让中分辨率层也不再注入颜色，颜色只在最浅 1/2 层细化；
+4. `query_threshold` 从 `0.5` 提到 `0.7`，进一步缩小颜色生效区域；
+5. 仍不行就要么换更准的 SAM 服装 mask（`features.part_reference_bank.masks.*`），要么彻底关掉颜色注入（`features.color_structure.enabled: false`），让颜色完全由 reference image / part bank 来表达。
 
 ## 4. 可微近似姿势损失
 
@@ -157,11 +248,11 @@ python Market_gen.py --disable_color_structure
 
 ## 6. 新增/修改文件
 
-- `IPG/src/models/mutual_self_attention.py`：三路 reference bank、mask 融合、颜色 cross-attention 注入。
+- `IPG/src/models/mutual_self_attention.py`：三路 reference bank、mask 融合、颜色 cross-attention 注入；新增 timestep / layer / hard query 三段门控（路径 2/3/4），`set_active_sigma` 与 `set_color_gating` 两个 setter。
 - `IPG/src/models/color_condition.py`：冻结 CLIP 文本编码器。
 - `IPG/src/models/pose_loss.py`：可微近似姿势损失。
 - `IPG/src/utils/mask_utils.py`：mask fallback、pose 粗 mask、attention token 对齐。
 - `IPG/tools/extract_sam3_part_masks.py`：SAM3 离线提取上/下半身语义 mask。
 - `IPG/src/ipg_dataset.py`：返回 mask 与颜色文本。
-- `IPG/train_ipg.py`：训练链路、损失、checkpoint 保存。
-- `IPG/src/pipelines/pipeline.py` 和 `IPG/Market_gen.py`：推理链路。
+- `IPG/train_ipg.py`：训练链路、损失、checkpoint 保存；从 yaml 读取并透传颜色门控参数到 `IPGTrainModel.reference_control_reader`，`IPGTrainModel` 缓存 `alphas_cumprod` 以便每个 batch 把平均 sigma 通知 controller，让训练侧 sigma gate 与推理对齐。
+- `IPG/src/pipelines/pipeline.py` 和 `IPG/Market_gen.py`：推理链路；`__call__` 与 CLI 都增加四个颜色门控参数，denoising loop 每步通过 `set_active_sigma` 通知 controller 当前噪声级别。

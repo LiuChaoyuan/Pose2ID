@@ -56,6 +56,10 @@ class ReferenceAttentionControl:
         part_bank_fusion: Optional[PartBankFusion] = None,
         color_structure_enabled=False,
         color_scale=0.0,
+        color_timestep_max_sigma: Optional[float] = None,
+        color_min_layer_weight: float = 0.0,
+        color_hard_gating: bool = False,
+        color_query_threshold: float = 0.5,
     ) -> None:
         # 10. Modify self attention and group norm
         self.unet = unet
@@ -68,6 +72,23 @@ class ReferenceAttentionControl:
         self.part_bank_fusion = part_bank_fusion
         self.color_structure_enabled = color_structure_enabled
         self.color_scale = float(color_scale)
+        # Path 2: Skip color injection when current diffusion step has high noise
+        # (sigma > color_timestep_max_sigma). None disables this gate.
+        self.color_timestep_max_sigma = (
+            float(color_timestep_max_sigma)
+            if color_timestep_max_sigma is not None
+            else None
+        )
+        # Path 3: Only inject color in transformer blocks whose attn_weight
+        # (relative depth in 0..1, larger = higher resolution / shallower) is
+        # at least this threshold. 0.0 = inject in every block.
+        self.color_min_layer_weight = float(color_min_layer_weight)
+        # Path 4: When true, only queries inside the body-part mask participate
+        # in the color cross-attention, eliminating soft-mask leakage across
+        # body regions. The threshold turns the soft mask into a hard 0/1 gate.
+        self.color_hard_gating = bool(color_hard_gating)
+        self.color_query_threshold = float(color_query_threshold)
+        self.active_sigma: Optional[float] = None
         self.target_upper_mask = None
         self.target_lower_mask = None
         self.color_upper_states = None
@@ -283,9 +304,21 @@ class ReferenceAttentionControl:
                             encoder_hidden_states=encoder_hidden_states,
                             attention_mask=attention_mask,
                         )
+                        # Path 2 (sigma gating) and Path 3 (layer gating): skip
+                        # the color injection entirely when the current step is
+                        # too noisy or the current transformer block is too deep.
+                        sigma_ok = (
+                            controller.color_timestep_max_sigma is None
+                            or controller.active_sigma is None
+                            or controller.active_sigma <= controller.color_timestep_max_sigma
+                        )
+                        layer_weight = float(getattr(self, "attn_weight", 1.0))
+                        layer_ok = layer_weight >= controller.color_min_layer_weight
                         if (
                             controller.color_structure_enabled
                             and controller.color_scale > 0
+                            and sigma_ok
+                            and layer_ok
                             and getattr(self, "color_upper_states", None) is not None
                             and getattr(self, "color_lower_states", None) is not None
                         ):
@@ -333,8 +366,24 @@ class ReferenceAttentionControl:
                                     encoder_hidden_states=color_lower_states,
                                     attention_mask=None,
                                 )
+                                if controller.color_hard_gating:
+                                    # Path 4: turn the soft mask into a hard 0/1
+                                    # write-back gate. Outside the body part the
+                                    # color residual is strictly zero, which
+                                    # eliminates the soft-mask edge leakage that
+                                    # was reshaping nearby limbs.
+                                    threshold = controller.color_query_threshold
+                                    upper_gate = (upper_mask > threshold).to(
+                                        dtype=norm_hidden_states.dtype
+                                    )
+                                    lower_gate = (lower_mask > threshold).to(
+                                        dtype=norm_hidden_states.dtype
+                                    )
+                                else:
+                                    upper_gate = upper_mask
+                                    lower_gate = lower_mask
                                 cross_output = cross_output + controller.color_scale * (
-                                    upper_mask * upper_color + lower_mask * lower_color
+                                    upper_gate * upper_color + lower_gate * lower_color
                                 )
                         hidden_states = cross_output + hidden_states
 
@@ -533,9 +582,44 @@ class ReferenceAttentionControl:
             module.color_upper_states = upper_states
             module.color_lower_states = lower_states
 
+    def set_active_sigma(self, sigma: Optional[float]):
+        """Path 2: tell the controller the noise level of the current step.
+
+        Pipeline / training loop should call this once per denoising step. Pass
+        None to disable the timestep gate (e.g. for high-noise training where
+        you still want the model to see the color signal).
+        """
+        if sigma is None:
+            self.active_sigma = None
+        elif isinstance(sigma, torch.Tensor):
+            self.active_sigma = float(sigma.detach().float().mean().item())
+        else:
+            self.active_sigma = float(sigma)
+
+    def set_color_gating(
+        self,
+        *,
+        timestep_max_sigma: Optional[float] = None,
+        min_layer_weight: Optional[float] = None,
+        hard_gating: Optional[bool] = None,
+        query_threshold: Optional[float] = None,
+    ):
+        """Update color gating knobs after construction (e.g. CLI overrides)."""
+        if timestep_max_sigma is not None:
+            self.color_timestep_max_sigma = (
+                float(timestep_max_sigma) if timestep_max_sigma >= 0 else None
+            )
+        if min_layer_weight is not None:
+            self.color_min_layer_weight = float(min_layer_weight)
+        if hard_gating is not None:
+            self.color_hard_gating = bool(hard_gating)
+        if query_threshold is not None:
+            self.color_query_threshold = float(query_threshold)
+
     def clear_conditions(self):
         self.set_target_masks(None, None)
         self.set_color_states(None, None)
+        self.set_active_sigma(None)
 
     def clear(self):
         if self.reference_attn:
@@ -573,3 +657,4 @@ class ReferenceAttentionControl:
             self.target_lower_mask = None
             self.color_upper_states = None
             self.color_lower_states = None
+            self.active_sigma = None

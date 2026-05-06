@@ -217,6 +217,10 @@ class Pose2ImagePipeline(DiffusionPipeline):
         part_bank_enabled: bool = False,
         color_structure_enabled: bool = False,
         color_scale: float = 0.25,
+        color_timestep_max_sigma: Optional[float] = None,
+        color_min_layer_weight: float = 0.0,
+        color_hard_gating: bool = False,
+        color_query_threshold: float = 0.5,
         **kwargs,
     ):
         # Default height and width to unet
@@ -253,6 +257,10 @@ class Pose2ImagePipeline(DiffusionPipeline):
             part_bank_fusion=self.part_bank_fusion,
             color_structure_enabled=color_structure_enabled,
             color_scale=color_scale,
+            color_timestep_max_sigma=color_timestep_max_sigma,
+            color_min_layer_weight=color_min_layer_weight,
+            color_hard_gating=color_hard_gating,
+            color_query_threshold=color_query_threshold,
         )
 
         num_channels_latents = self.denoising_unet.in_channels
@@ -364,8 +372,16 @@ class Pose2ImagePipeline(DiffusionPipeline):
 
         # denoising loop
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
+        # Pre-compute the alphas_cumprod table on the working device so we can
+        # cheaply derive the noise level (sigma) for color timestep gating.
+        alphas_cumprod = self.scheduler.alphas_cumprod.to(
+            device=device, dtype=torch.float32
+        )
         # with self.progress_bar(total=num_inference_steps) as progress_bar:
         for i, t in enumerate(timesteps):
+            t_index = int(t.item()) if isinstance(t, torch.Tensor) else int(t)
+            sigma_t = float((1.0 - alphas_cumprod[t_index]).clamp(min=0).sqrt().item())
+            reference_control_reader.set_active_sigma(sigma_t)
 
             # 1. Forward reference image
             if i == 0:

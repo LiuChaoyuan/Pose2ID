@@ -48,6 +48,11 @@ class IPGTrainModel(nn.Module):
         part_bank_lambda_init: float = 0.0,
         color_structure_enabled: bool = False,
         color_scale: float = 0.0,
+        color_timestep_max_sigma: Optional[float] = None,
+        color_min_layer_weight: float = 0.0,
+        color_hard_gating: bool = False,
+        color_query_threshold: float = 0.5,
+        noise_scheduler=None,
     ):
         super().__init__()
         self.ifr = ifr
@@ -74,7 +79,19 @@ class IPGTrainModel(nn.Module):
             part_bank_fusion=self.part_bank_fusion,
             color_structure_enabled=color_structure_enabled,
             color_scale=color_scale,
+            color_timestep_max_sigma=color_timestep_max_sigma,
+            color_min_layer_weight=color_min_layer_weight,
+            color_hard_gating=color_hard_gating,
+            color_query_threshold=color_query_threshold,
         )
+        # Buffer the diffusion noise schedule so the training loop can derive a
+        # per-step sigma to drive the color sigma gate (Path 2). We pick the
+        # batch mean sigma since attention hooks expect a single scalar.
+        if noise_scheduler is not None:
+            alphas_cumprod = noise_scheduler.alphas_cumprod.clone().float()
+        else:
+            alphas_cumprod = torch.zeros(0)
+        self.register_buffer("alphas_cumprod", alphas_cumprod, persistent=False)
 
     def forward(
         self,
@@ -133,6 +150,16 @@ class IPGTrainModel(nn.Module):
                     color_lower_states,
                     color_scale=self.color_scale,
                 )
+                # Path 2: tell the controller the noise level of this batch so
+                # the sigma gate from the yaml takes effect during training as
+                # well, keeping train / inference behavior consistent.
+                if self.alphas_cumprod.numel() > 0:
+                    sigma_per_sample = (
+                        1.0 - self.alphas_cumprod[timesteps].clamp(min=0)
+                    ).sqrt()
+                    self.reference_control_reader.set_active_sigma(
+                        float(sigma_per_sample.mean().item())
+                    )
             self.reference_control_writer.set_active_bank("global")
             self.reference_unet(
                 ref_image_latents,
@@ -596,6 +623,12 @@ def main():
         reference_unet.enable_gradient_checkpointing()
         denoising_unet.enable_gradient_checkpointing()
 
+    raw_max_sigma = cfg_select(cfg, "features.color_structure.timestep_max_sigma")
+    color_timestep_max_sigma = (
+        float(raw_max_sigma)
+        if raw_max_sigma is not None and float(raw_max_sigma) >= 0
+        else None
+    )
     ipg_model = IPGTrainModel(
         ifr=ifr,
         reference_unet=reference_unet,
@@ -607,6 +640,17 @@ def main():
         ),
         color_structure_enabled=color_structure_enabled,
         color_scale=cfg_select(cfg, "features.color_structure.color_scale", 0.25),
+        color_timestep_max_sigma=color_timestep_max_sigma,
+        color_min_layer_weight=float(
+            cfg_select(cfg, "features.color_structure.min_layer_weight", 0.0)
+        ),
+        color_hard_gating=bool(
+            cfg_select(cfg, "features.color_structure.hard_query_gating", False)
+        ),
+        color_query_threshold=float(
+            cfg_select(cfg, "features.color_structure.query_threshold", 0.5)
+        ),
+        noise_scheduler=train_scheduler,
     )
     part_bank_fusion_ckpt = cfg_select(cfg, "model.part_bank_fusion_ckpt")
     if part_bank_fusion_ckpt:
