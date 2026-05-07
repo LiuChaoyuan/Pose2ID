@@ -380,7 +380,7 @@ def main(cfg):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--ckpt_dir", type=str, default="/root/autodl-fs/epoch-10000/checkpoint-10000")
+    parser.add_argument("--ckpt_dir", type=str, default="/root/autodl-fs/ipg_train_model_05-06/checkpoint-3000")
     parser.add_argument("--pose_dir", type=str, default="/root/Pose2ID/IPG/standard_poses")
     parser.add_argument("--ref_dir", type=str, default="/root/Pose2ID/IPG/ref")
     parser.add_argument("--out_dir", type=str, default="/root/Pose2ID/IPG/gen_epoch10000")

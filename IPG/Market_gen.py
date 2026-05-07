@@ -37,9 +37,9 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description="Generate pose-guided Market1501 images for query and bound_box_test."
     )
-    parser.add_argument("--query_dir", type=str, default="/root/autodl-fs/datasets/market1501/query")
-    parser.add_argument("--bound_box_test_dir", type=str, default="/root/autodl-fs/datasets/market1501/bounding_box_test")
-    parser.add_argument("--ckpt_dir", type=str, default="/root/autodl-fs/epoch-10000/checkpoint-10000")
+    parser.add_argument("--query_dir", type=str, default="/root/autodl-tmp/datasets/market1501_tiny/query_tiny")
+    parser.add_argument("--bound_box_test_dir", type=str, default="/root/autodl-tmp/datasets/market1501_tiny/bounding_box_test_tiny")
+    parser.add_argument("--ckpt_dir", type=str, default="/root/autodl-fs/ipg_trained_model_05-06/checkpoint-3000")
     parser.add_argument("--pose_dir", type=str, default="standard_poses")
     parser.add_argument("--config", type=str, default="./configs/inference.yaml")
     parser.add_argument("--reid_cfg_path", type=str, default="./cfg_transreid.pkl")

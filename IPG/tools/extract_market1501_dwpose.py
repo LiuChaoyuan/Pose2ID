@@ -157,9 +157,10 @@ def main():
     print("[INFO] Loading DWPose Detector...")
     detector = DWposeDetector()
 
-    process_split(detector, "bounding_box_train", num_workers=8, save_workers=8)
-    process_split(detector, "bounding_box_test", num_workers=8, save_workers=8)
-    process_split(detector, "query", num_workers=8, save_workers=8)
+    # process_split(detector, "bounding_box_train", num_workers=8, save_workers=8)
+    # process_split(detector, "bounding_box_test", num_workers=8, save_workers=8)
+    # process_split(detector, "query", num_workers=8, save_workers=8)
+    process_split(detector, "bounding_box_train_less", num_workers=8, save_workers=8)
 
 
 if __name__ == "__main__":

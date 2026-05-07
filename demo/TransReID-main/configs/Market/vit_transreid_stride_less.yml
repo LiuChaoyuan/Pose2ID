@@ -1,0 +1,66 @@
+MODEL:
+  PRETRAIN_CHOICE: 'market'
+  PRETRAIN_PATH: '/root/Pose2ID/IPG/pretrained/transformer_20.pth'
+  METRIC_LOSS_TYPE: 'triplet'
+  IF_LABELSMOOTH: 'off'
+  IF_WITH_CENTER: 'no'
+  NAME: 'transformer'
+  NO_MARGIN: True
+  DEVICE_ID: ('0')
+  TRANSFORMER_TYPE: 'vit_base_patch16_224_TransReID'
+  STRIDE_SIZE: [12, 12]
+  SIE_CAMERA: true
+  SIE_COE: 3.0
+  JPM: True
+  RE_ARRANGE: True
+
+INPUT:
+  SIZE_TRAIN: [256, 128]
+  SIZE_TEST: [256, 128]
+  PROB: 0.5
+  RE_PROB: 0.5
+  PADDING: 10
+  PIXEL_MEAN: [0.5, 0.5, 0.5]
+  PIXEL_STD: [0.5, 0.5, 0.5]
+
+DATASETS:
+  NAMES: ('market1501')
+  ROOT_DIR: ('/root/autodl-tmp/datasets')
+  DATASET_DIR: 'market1501_less'
+  TRAIN_DIR: 'bounding_box_train_less'
+  QUERY_DIR: 'query_less'
+  GALLERY_DIR: 'bounding_box_test_less'
+  QUERY_GEN_DIR: 'query_less_gen'
+  GALLERY_GEN_DIR: 'bounding_box_test_less_gen'
+
+DATALOADER:
+  SAMPLER: 'softmax_triplet'
+  NUM_INSTANCE: 4
+  NUM_WORKERS: 8
+
+SOLVER:
+  OPTIMIZER_NAME: 'SGD'
+  MAX_EPOCHS: 120
+  BASE_LR: 0.008
+  IMS_PER_BATCH: 64
+  WARMUP_METHOD: 'linear'
+  LARGE_FC_LR: False
+  CHECKPOINT_PERIOD: 120
+  LOG_PERIOD: 50
+  EVAL_PERIOD: 120
+  WEIGHT_DECAY: 1e-4
+  WEIGHT_DECAY_BIAS: 1e-4
+  BIAS_LR_FACTOR: 2
+
+TEST:
+  EVAL: True
+  IMS_PER_BATCH: 256
+  RE_RANKING: False
+  WEIGHT: '/root/Pose2ID/IPG/pretrained/transformer_20.pth'
+  NECK_FEAT: 'before'
+  FEAT_NORM: 'yes'
+  NFC: True
+  IPG: True
+  IPG_POSE_NUM: 8
+
+OUTPUT_DIR: '../logs/market1501_less_vit_transreid_stride_ipg_05-06_no-cameraid'

@@ -17,31 +17,23 @@ data:
   ref_random_erasing_on: "reid"
   allow_same_reference: false
 
+
 features:
   part_reference_bank:
     enabled: true
     lambda_init: 0.0
     masks:
-      ref_upper_root: "/root/autodl-tmp/datasets/market1501_less/sam3_part_masks/bounding_box_train_less/upper"
+      ref_upper_root: "/root/autodl-tmp/datasets/market1501/sam3_part_masks/bounding_box_train_less/upper"
       ref_lower_root: "/root/autodl-tmp/datasets/market1501_less/sam3_part_masks/bounding_box_train_less/lower"
       target_upper_root: "/root/autodl-tmp/datasets/market1501_less/sam3_part_masks/bounding_box_train_less/upper"
       target_lower_root: "/root/autodl-tmp/datasets/market1501_less/sam3_part_masks/bounding_box_train_less/lower"
   color_structure:
     enabled: true
-    color_json_path: "/root/autodl-fs/datasets/market1501/clothing_colors_less_nl.json"
+    color_json_path: "/root/autodl-tmp/datasets/market1501_less/clothing_colors_less_nl.json"
     clip_model_path: null
     tokenizer_subfolder: "tokenizer"
     text_encoder_subfolder: "text_encoder"
     color_scale: 0.25
-    # See configs/inference.yaml for full documentation. Defaults during
-    # training are intentionally looser than inference: we let the model
-    # see color signal across more sigma / layers so the cross-attention
-    # weights can actually learn the color concept; the gating is then
-    # tightened at inference time to suppress structural drift.
-    timestep_max_sigma: -1
-    min_layer_weight: 0.0
-    hard_query_gating: false
-    query_threshold: 0.5
   pose_loss:
     enabled: true
     weight: 0.05
@@ -49,14 +41,14 @@ features:
     distance_iterations: 8
 
 solver:
-  train_batch_size: 4
+  train_batch_size: 8
   num_workers: 4
   gradient_accumulation_steps: 1
   mixed_precision: "fp16"
   enable_xformers_memory_efficient_attention: true
   gradient_checkpointing: false
-  max_train_steps: 3000
-  checkpointing_steps: 3000
+  max_train_steps: 250
+  checkpointing_steps: 125
   checkpoints_total_limit: 5
   max_grad_norm: 1.0
   learning_rate: 1.0e-5
@@ -113,7 +105,7 @@ noise_scheduler_kwargs:
 
 base_model_path: "/root/autodl-tmp/stable-diffusion-v1-5"
 vae_model_path: "/root/autodl-tmp/sd-vae-ft-mse"
-output_dir: "/root/autodl-fs/ipg_trained_model_05-06"
+output_dir: "/root/autodl-fs/ipg_trained_model_xx-xx"
 
 weight_dtype: "fp16"  # [fp16, fp32, bf16]
 uncond_ratio: 0.1
