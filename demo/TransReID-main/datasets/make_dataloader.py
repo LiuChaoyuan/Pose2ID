@@ -26,7 +26,7 @@ def train_collate_fn(batch):
     """
     # collate_fn这个函数的输入就是一个list，list的长度是一个batch size，list中的每个元素都是__getitem__得到的结果
     """
-    imgs, pids, camids, viewids , _ = zip(*batch)
+    imgs, pids, camids, viewids = zip(*[(item[0], item[1], item[2], item[3]) for item in batch])
     pids = torch.tensor(pids, dtype=torch.int64)
     viewids = torch.tensor(viewids, dtype=torch.int64)
     camids = torch.tensor(camids, dtype=torch.int64)
@@ -66,7 +66,16 @@ def make_dataloader(cfg):
 
     num_workers = cfg.DATALOADER.NUM_WORKERS
 
-    dataset = __factory[cfg.DATASETS.NAMES](root=cfg.DATASETS.ROOT_DIR)
+    dataset = __factory[cfg.DATASETS.NAMES](
+        root=cfg.DATASETS.ROOT_DIR,
+        dataset_dir=cfg.DATASETS.DATASET_DIR,
+        train_dir=cfg.DATASETS.TRAIN_DIR,
+        query_dir=cfg.DATASETS.QUERY_DIR,
+        gallery_dir=cfg.DATASETS.GALLERY_DIR,
+        query_gen_dir=cfg.DATASETS.QUERY_GEN_DIR,
+        gallery_gen_dir=cfg.DATASETS.GALLERY_GEN_DIR,
+        ipg_pose_num=cfg.TEST.IPG_POSE_NUM,
+    )
 
     train_set = ImageDataset(dataset.train, train_transforms)
     train_set_normal = ImageDataset(dataset.train, val_transforms)

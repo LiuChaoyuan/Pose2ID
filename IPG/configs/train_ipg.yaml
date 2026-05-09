@@ -44,8 +44,8 @@ features:
     query_threshold: 0.5
   pose_loss:
     enabled: true
-    weight: 0.05
-    max_sigma: 0.35
+    weight: 0.01
+    max_sigma: 0.25
     distance_iterations: 8
 
 solver:
@@ -113,7 +113,7 @@ noise_scheduler_kwargs:
 
 base_model_path: "/root/autodl-tmp/stable-diffusion-v1-5"
 vae_model_path: "/root/autodl-tmp/sd-vae-ft-mse"
-output_dir: "/root/autodl-fs/ipg_trained_model_05-06"
+output_dir: "/root/autodl-fs/ipg_trained_model_05-08"
 
 weight_dtype: "fp16"  # [fp16, fp32, bf16]
 uncond_ratio: 0.1

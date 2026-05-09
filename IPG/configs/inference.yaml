@@ -8,13 +8,13 @@ features:
     enabled: true
     lambda_init: 0.0
     masks:
-      ref_upper_root: "/root/autodl-tmp/datasets/market1501_tiny/sam3_part_masks"
-      ref_lower_root: "/root/autodl-tmp/datasets/market1501_tiny/sam3_part_masks"
-      target_upper_root: "/root/autodl-tmp/datasets/market1501_tiny/sam3_part_masks"
-      target_lower_root: "/root/autodl-tmp/datasets/market1501_tiny/sam3_part_masks"
+      ref_upper_root: "/root/autodl-tmp/datasets/market1501_less/sam3_part_masks"
+      ref_lower_root: "/root/autodl-tmp/datasets/market1501_less/sam3_part_masks"
+      target_upper_root: "/root/autodl-tmp/datasets/market1501_less/sam3_part_masks"
+      target_lower_root: "/root/autodl-tmp/datasets/market1501_less/sam3_part_masks"
   color_structure:
     enabled: true
-    color_json_path: "/root/autodl-tmp/datasets/market1501/clothing_colors_tiny_nl.json"
+    color_json_path: "/root/autodl-tmp/datasets/market1501/clothing_colors_less_nl.json"
     clip_model_path: null
     tokenizer_subfolder: "tokenizer"
     text_encoder_subfolder: "text_encoder"

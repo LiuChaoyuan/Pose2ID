@@ -141,7 +141,13 @@ def do_inference(cfg,
     logger = logging.getLogger("transreid.test")
     logger.info("Enter inferencing")
 
-    evaluator = R1_mAP_eval(num_query, max_rank=50, feat_norm=cfg.TEST.FEAT_NORM, nfc=cfg.TEST.NFC)
+    evaluator = R1_mAP_eval(
+        num_query,
+        max_rank=50,
+        feat_norm=cfg.TEST.FEAT_NORM,
+        reranking=cfg.TEST.RE_RANKING,
+        nfc=cfg.TEST.NFC,
+    )
 
     evaluator.reset()
 
@@ -159,7 +165,6 @@ def do_inference(cfg,
             img = img.to(device)
             camids = camids.to(device)
             target_view = target_view.to(device)
-            camids = torch.zeros_like(camids)
             feat = model(img, cam_label=camids, view_label=target_view)
             if cfg.TEST.IPG:
                 feat_ipg = torch.zeros(feat.size()).to(device)
@@ -167,7 +172,7 @@ def do_inference(cfg,
                     feat_ipg += model(img_ipg.to(device), cam_label=camids, view_label=target_view)
                 evaluator.update((feat, pid, camid, feat_ipg/len(imgs_ipg)))
             else:
-                evaluator.update((feat, pid, camid, feat))
+                evaluator.update((feat, pid, camid))
             
             img_path_list.extend(imgpath)
 
@@ -177,5 +182,4 @@ def do_inference(cfg,
     for r in [1, 5, 10]:
         logger.info("CMC curve, Rank-{:<3}:{:.2%}".format(r, cmc[r - 1]))
     return cmc[0], cmc[4]
-
 

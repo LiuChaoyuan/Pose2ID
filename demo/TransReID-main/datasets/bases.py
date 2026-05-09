@@ -2,8 +2,6 @@ from PIL import Image, ImageFile
 
 from torch.utils.data import Dataset
 import os.path as osp
-import random
-import torch
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 
@@ -90,5 +88,5 @@ class ImageDataset(Dataset):
                 if self.transform is not None:
                     img_ipg = self.transform(img_ipg)
                 imgs_ipg.append(img_ipg)
-            return img, pid, camid, trackid,img_path.split('/')[-1], imgs_ipg
-        return img, pid, camid, trackid,img_path.split('/')[-1], [img]
+            return img, pid, camid, trackid, osp.basename(img_path), imgs_ipg
+        return img, pid, camid, trackid, osp.basename(img_path), [img]

@@ -9,7 +9,7 @@ MODEL:
   DEVICE_ID: ('0')
   TRANSFORMER_TYPE: 'vit_base_patch16_224_TransReID'
   STRIDE_SIZE: [12, 12]
-  SIE_CAMERA: True
+  SIE_CAMERA: False
   SIE_COE: 3.0
   JPM: True
   RE_ARRANGE: True
@@ -57,5 +57,4 @@ TEST:
   IPG: True
 
 OUTPUT_DIR: '../logs/market_vit_transreid_stride'
-
 

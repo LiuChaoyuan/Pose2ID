@@ -95,6 +95,14 @@ _C.DATASETS = CN()
 _C.DATASETS.NAMES = ('market1501')
 # Root directory where datasets should be used (and downloaded if not found)
 _C.DATASETS.ROOT_DIR = ('../data')
+# Optional Market1501-style directory names under ROOT_DIR. Leave blank to use
+# the standard Market1501 layout.
+_C.DATASETS.DATASET_DIR = ''
+_C.DATASETS.TRAIN_DIR = ''
+_C.DATASETS.QUERY_DIR = ''
+_C.DATASETS.GALLERY_DIR = ''
+_C.DATASETS.QUERY_GEN_DIR = ''
+_C.DATASETS.GALLERY_GEN_DIR = ''
 
 
 # -----------------------------------------------------------------------------
@@ -175,6 +183,8 @@ _C.TEST.RE_RANKING = False
 _C.TEST.NFC = False
 # If test with IPG, options: 'True','False'
 _C.TEST.IPG = False
+# Number of generated pose images per query/gallery image when IPG is enabled.
+_C.TEST.IPG_POSE_NUM = 8
 # Path to trained model
 _C.TEST.WEIGHT = ""
 # Which feature of BNNeck to be used for test, before or after BNNneck, options: 'before' or 'after'

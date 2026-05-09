@@ -103,20 +103,22 @@ class R1_mAP_eval():
         self.feats_ipg = []
 
     def update(self, output):  # called once for each batch
-        feat, pid, camid, feat_ipg = output
+        feat, pid, camid = output[:3]
         self.feats.append(feat.cpu())
         self.pids.extend(np.asarray(pid))
         self.camids.extend(np.asarray(camid))
-        self.feats_ipg.append(feat_ipg.cpu())
+        if len(output) == 4:
+            self.feats_ipg.append(output[3].cpu())
 
     def compute(self):  # called after each epoch
         feats = torch.cat(self.feats, dim=0)
-        
-        feats_ipg = torch.cat(self.feats_ipg, dim=0)
-        eta = 2
-        # feats = torch.nn.functional.normalize(feats, dim=1, p=2)
-        # feats_ipg = torch.nn.functional.normalize(feats_ipg, dim=1, p=2)
-        feats = feats + eta * feats_ipg
+
+        if self.feats_ipg:
+            feats_ipg = torch.cat(self.feats_ipg, dim=0)
+            eta = 2
+            # feats = torch.nn.functional.normalize(feats, dim=1, p=2)
+            # feats_ipg = torch.nn.functional.normalize(feats_ipg, dim=1, p=2)
+            feats = feats + eta * feats_ipg
         
         
         if self.feat_norm:
@@ -149,6 +151,5 @@ class R1_mAP_eval():
         cmc, mAP = eval_func(distmat, q_pids, g_pids, q_camids, g_camids)
 
         return cmc, mAP, distmat, self.pids, self.camids, qf, gf
-
 
 

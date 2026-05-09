@@ -9,7 +9,7 @@ MODEL:
   DEVICE_ID: ('0')
   TRANSFORMER_TYPE: 'vit_base_patch16_224_TransReID'
   STRIDE_SIZE: [12, 12]
-  SIE_CAMERA: true
+  SIE_CAMERA: False
   SIE_COE: 3.0
   JPM: True
   RE_ARRANGE: True
@@ -63,4 +63,4 @@ TEST:
   IPG: True
   IPG_POSE_NUM: 8
 
-OUTPUT_DIR: '../logs/market1501_less_vit_transreid_stride_ipg_05-06_no-cameraid'
+OUTPUT_DIR: '../logs/market1501_less_vit_transreid_stride_ipg_05-09_no-cameraid'
