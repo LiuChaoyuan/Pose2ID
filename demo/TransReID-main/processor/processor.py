@@ -181,5 +181,12 @@ def do_inference(cfg,
     logger.info("mAP: {:.2%}".format(mAP))
     for r in [1, 5, 10]:
         logger.info("CMC curve, Rank-{:<3}:{:.2%}".format(r, cmc[r - 1]))
+    if evaluator.id2_stats:
+        logger.info(
+            "ID^2: {:.6f} (query: {:.6f}, gallery: {:.6f})".format(
+                evaluator.id2_stats['all'],
+                evaluator.id2_stats['query'],
+                evaluator.id2_stats['gallery'],
+            )
+        )
     return cmc[0], cmc[4]
-

@@ -1,0 +1,165 @@
+2026-05-09 17:27:56,514 transreid INFO: Namespace(config_file='/root/Pose2ID/demo/TransReID-main/configs/Market/vit_transreid_stride_less.yml', opts=[])
+2026-05-09 17:27:56,514 transreid INFO: Loaded configuration file /root/Pose2ID/demo/TransReID-main/configs/Market/vit_transreid_stride_less.yml
+2026-05-09 17:27:56,514 transreid INFO: 
+MODEL:
+  PRETRAIN_CHOICE: 'market'
+  PRETRAIN_PATH: '/root/Pose2ID/IPG/pretrained/transformer_20.pth'
+  METRIC_LOSS_TYPE: 'triplet'
+  IF_LABELSMOOTH: 'off'
+  IF_WITH_CENTER: 'no'
+  NAME: 'transformer'
+  NO_MARGIN: True
+  DEVICE_ID: ('0')
+  TRANSFORMER_TYPE: 'vit_base_patch16_224_TransReID'
+  STRIDE_SIZE: [12, 12]
+  SIE_CAMERA: False
+  SIE_COE: 3.0
+  JPM: True
+  RE_ARRANGE: True
+
+INPUT:
+  SIZE_TRAIN: [256, 128]
+  SIZE_TEST: [256, 128]
+  PROB: 0.5
+  RE_PROB: 0.5
+  PADDING: 10
+  PIXEL_MEAN: [0.5, 0.5, 0.5]
+  PIXEL_STD: [0.5, 0.5, 0.5]
+
+DATASETS:
+  NAMES: ('market1501')
+  ROOT_DIR: ('/root/autodl-tmp/datasets')
+  DATASET_DIR: 'market1501_less'
+  TRAIN_DIR: 'bounding_box_train_less'
+  QUERY_DIR: 'query_less'
+  GALLERY_DIR: 'bounding_box_test_less'
+  QUERY_GEN_DIR: 'query_less_gen'
+  GALLERY_GEN_DIR: 'bounding_box_test_less_gen'
+
+DATALOADER:
+  SAMPLER: 'softmax_triplet'
+  NUM_INSTANCE: 4
+  NUM_WORKERS: 8
+
+SOLVER:
+  OPTIMIZER_NAME: 'SGD'
+  MAX_EPOCHS: 120
+  BASE_LR: 0.008
+  IMS_PER_BATCH: 64
+  WARMUP_METHOD: 'linear'
+  LARGE_FC_LR: False
+  CHECKPOINT_PERIOD: 120
+  LOG_PERIOD: 50
+  EVAL_PERIOD: 120
+  WEIGHT_DECAY: 1e-4
+  WEIGHT_DECAY_BIAS: 1e-4
+  BIAS_LR_FACTOR: 2
+
+TEST:
+  EVAL: True
+  IMS_PER_BATCH: 256
+  RE_RANKING: False
+  WEIGHT: '/root/Pose2ID/IPG/pretrained/transformer_20.pth'
+  NECK_FEAT: 'before'
+  FEAT_NORM: 'yes'
+  NFC: True
+  IPG: True
+  IPG_POSE_NUM: 8
+
+OUTPUT_DIR: '../logs/market1501_less_vit_transreid_stride_ipg_05-09_no-cameraid'
+
+2026-05-09 17:27:56,515 transreid INFO: Running with config:
+DATALOADER:
+  NUM_INSTANCE: 4
+  NUM_WORKERS: 8
+  SAMPLER: softmax_triplet
+DATASETS:
+  DATASET_DIR: market1501_less
+  GALLERY_DIR: bounding_box_test_less
+  GALLERY_GEN_DIR: bounding_box_test_less_gen
+  NAMES: market1501
+  QUERY_DIR: query_less
+  QUERY_GEN_DIR: query_less_gen
+  ROOT_DIR: /root/autodl-tmp/datasets
+  TRAIN_DIR: bounding_box_train_less
+INPUT:
+  PADDING: 10
+  PIXEL_MEAN: [0.5, 0.5, 0.5]
+  PIXEL_STD: [0.5, 0.5, 0.5]
+  PROB: 0.5
+  RE_PROB: 0.5
+  SIZE_TEST: [256, 128]
+  SIZE_TRAIN: [256, 128]
+MODEL:
+  ATT_DROP_RATE: 0.0
+  COS_LAYER: False
+  DEVICE: cuda
+  DEVICE_ID: 0
+  DEVIDE_LENGTH: 4
+  DIST_TRAIN: False
+  DROP_OUT: 0.0
+  DROP_PATH: 0.1
+  ID_LOSS_TYPE: softmax
+  ID_LOSS_WEIGHT: 1.0
+  IF_LABELSMOOTH: off
+  IF_WITH_CENTER: no
+  JPM: True
+  LAST_STRIDE: 1
+  METRIC_LOSS_TYPE: triplet
+  NAME: transformer
+  NECK: bnneck
+  NO_MARGIN: True
+  PRETRAIN_CHOICE: market
+  PRETRAIN_PATH: /root/Pose2ID/IPG/pretrained/transformer_20.pth
+  RE_ARRANGE: True
+  SHIFT_NUM: 5
+  SHUFFLE_GROUP: 2
+  SIE_CAMERA: False
+  SIE_COE: 3.0
+  SIE_VIEW: False
+  STRIDE_SIZE: [12, 12]
+  TRANSFORMER_TYPE: vit_base_patch16_224_TransReID
+  TRIPLET_LOSS_WEIGHT: 1.0
+OUTPUT_DIR: ../logs/market1501_less_vit_transreid_stride_ipg_05-09_no-cameraid
+SOLVER:
+  BASE_LR: 0.008
+  BIAS_LR_FACTOR: 2
+  CENTER_LOSS_WEIGHT: 0.0005
+  CENTER_LR: 0.5
+  CHECKPOINT_PERIOD: 120
+  COSINE_MARGIN: 0.5
+  COSINE_SCALE: 30
+  EVAL_PERIOD: 120
+  GAMMA: 0.1
+  IMS_PER_BATCH: 64
+  LARGE_FC_LR: False
+  LOG_PERIOD: 50
+  MARGIN: 0.3
+  MAX_EPOCHS: 120
+  MOMENTUM: 0.9
+  OPTIMIZER_NAME: SGD
+  SEED: 1234
+  STEPS: (40, 70)
+  WARMUP_EPOCHS: 5
+  WARMUP_FACTOR: 0.01
+  WARMUP_METHOD: linear
+  WEIGHT_DECAY: 0.0001
+  WEIGHT_DECAY_BIAS: 0.0001
+TEST:
+  DIST_MAT: dist_mat.npy
+  EVAL: True
+  FEAT_NORM: yes
+  IMS_PER_BATCH: 256
+  IPG: True
+  IPG_POSE_NUM: 8
+  NECK_FEAT: before
+  NFC: True
+  RE_RANKING: False
+  WEIGHT: /root/Pose2ID/IPG/pretrained/transformer_20.pth
+2026-05-09 17:28:01,745 transreid.test INFO: Enter inferencing
+2026-05-09 17:29:40,564 transreid.test INFO: Validation Results 
+2026-05-09 17:29:40,564 transreid.test INFO: mAP: 89.28%
+2026-05-09 17:29:40,565 transreid.test INFO: CMC curve, Rank-1  :89.76%
+2026-05-09 17:29:40,565 transreid.test INFO: CMC curve, Rank-5  :95.97%
+2026-05-09 17:29:40,565 transreid.test INFO: CMC curve, Rank-10 :97.66%
+2026-05-09 17:29:40,565 transreid.test INFO: ID^2: 0.052290 (query: 0.042856, gallery: 0.037945)

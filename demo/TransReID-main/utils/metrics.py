@@ -25,6 +25,19 @@ def cosine_similarity(qf, gf):
     return dist_mat
 
 
+def ID2(feats, pids):
+    feats = torch.nn.functional.normalize(feats, dim=1, p=2)
+    pids = torch.as_tensor(np.asarray(pids), device=feats.device)
+    density = torch.zeros(feats.size(0), device=feats.device)
+
+    for pid in torch.unique(pids):
+        mask = pids == pid
+        center = feats[mask].mean(dim=0, keepdim=True)
+        density[mask] = torch.pow(feats[mask] - center, 2).sum(dim=1)
+
+    return density.cpu()
+
+
 def eval_func(distmat, q_pids, g_pids, q_camids, g_camids, max_rank=50):
     """Evaluation with market1501 metric
         Key: for each query identity, its gallery images from the same camera view are discarded.
@@ -101,6 +114,7 @@ class R1_mAP_eval():
         self.pids = []
         self.camids = []
         self.feats_ipg = []
+        self.id2_stats = {}
 
     def update(self, output):  # called once for each batch
         feat, pid, camid = output[:3]
@@ -139,6 +153,12 @@ class R1_mAP_eval():
         # gallery NFC
         if self.nfc:
             gf = NFC(gf)
+
+        self.id2_stats = {
+            'all': ID2(torch.cat((qf, gf), dim=0), np.concatenate((q_pids, g_pids))).mean().item(),
+            'query': ID2(qf, q_pids).mean().item(),
+            'gallery': ID2(gf, g_pids).mean().item(),
+        }
             
         if self.reranking:
             print('=> Enter reranking')
@@ -151,5 +171,4 @@ class R1_mAP_eval():
         cmc, mAP = eval_func(distmat, q_pids, g_pids, q_camids, g_camids)
 
         return cmc, mAP, distmat, self.pids, self.camids, qf, gf
-
 
